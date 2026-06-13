@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Clock, User, Building2, Banknote, AlertTriangle,
   Download, Eye, MessageSquare, CheckCircle2, XCircle, UserPlus, Share2,
   Paperclip, ChevronDown, ChevronRight, FileSpreadsheet, File, Folder,
   Play, Scale, Landmark, Stamp, Archive, GitBranch, StopCircle,
+  Upload, Trash2, Plus, AlertCircle,
 } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import { useAppStore } from '@/store/useAppStore';
@@ -12,8 +13,8 @@ import {
   CONTRACT_TYPE_CONFIG, PRIORITY_CONFIG, STATUS_CONFIG, NODE_CONFIG,
   APPROVAL_ACTION_CONFIG, USERS,
 } from '@/utils/constants';
-import { formatCurrency, formatDate, formatDateTime, formatFileSize, getRelativeTime } from '@/utils/helpers';
-import { ApprovalRecord, WorkflowNode } from '@/types';
+import { formatCurrency, formatDate, formatDateTime, formatFileSize, generateId, getRelativeTime } from '@/utils/helpers';
+import { ApprovalRecord, WorkflowNode, ContractAttachment } from '@/types';
 
 const NODE_ICON_MAP: Record<string, any> = {
   Play: Play,
@@ -36,9 +37,11 @@ const FILE_ICONS: Record<string, any> = {
 export default function ApprovalDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const {
     contracts, workflows, currentUser,
     addApprovalRecord, advanceContractNode, rejectContract,
+    addAttachment, addSignatory, handleSignatoryApproval,
   } = useAppStore();
 
   const contract = contracts.find(c => c.id === id);
@@ -67,7 +70,34 @@ export default function ApprovalDetail() {
   const statusCfg = STATUS_CONFIG[contract.status];
   const currentNode = workflow.nodes.find(n => n.id === contract.currentNodeId);
   const currentNodeIdx = workflow.nodes.findIndex(n => n.id === contract.currentNodeId);
-  const isMyTurn = contract.status === 'pending' && !contract.approvalHistory.some(h => h.approverId === currentUser.id);
+
+  const pendingSignatory = contract.signatories.find(
+    (s) => s.userId === currentUser.id && s.status === 'pending'
+  );
+  const hasApprovedThisNode = contract.approvalHistory.some(
+    (h) => h.approverId === currentUser.id && h.nodeId === contract.currentNodeId && !h.signatoryId
+  );
+  const isMyTurn = contract.status === 'pending' && !hasApprovedThisNode && !pendingSignatory;
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      addAttachment(contract.id, {
+        name: file.name,
+        size: file.size,
+        uploadTime: new Date().toISOString(),
+        uploader: currentUser.name,
+        fileType: ext,
+      });
+    });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleApprove = () => {
     if (!currentNode) return;
@@ -103,10 +133,17 @@ export default function ApprovalDetail() {
 
   const handleSign = () => {
     const user = USERS.find(u => u.id === signUser);
-    if (!user) return;
+    if (!user || !currentNode) return;
+
+    addSignatory(contract.id, {
+      userId: user.id,
+      userName: user.name,
+      nodeId: currentNode.id,
+    });
+
     const record: ApprovalRecord = {
-      nodeId: currentNode?.id || '',
-      nodeName: currentNode?.name || '',
+      nodeId: currentNode.id,
+      nodeName: currentNode.name,
       approverId: currentUser.id,
       approverName: currentUser.name,
       action: 'sign',
@@ -119,8 +156,66 @@ export default function ApprovalDetail() {
     setSignUser('');
   };
 
+  const handleSignatoryApprove = (approved: boolean) => {
+    if (!pendingSignatory) return;
+    handleSignatoryApproval(contract.id, pendingSignatory.id, approved, opinion || (approved ? '同意（加签审批）' : '驳回（加签审批）'));
+    setOpinion('');
+  };
+
+  const allNodes: Array<{ node: WorkflowNode; isCondition: boolean; conditionMet?: boolean }> = [];
+  let lastId: string | null = null;
+  const startNode = workflow.nodes.find((n) => n.type === 'start');
+  if (startNode) {
+    const collectNodes = (nodeId: string) => {
+      const node = workflow.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      if (lastId && node.type === 'condition') {
+        const conn = workflow.connections.find((c) => c.from === lastId && c.to === nodeId);
+        if (conn?.condition) {
+          allNodes.push({
+            node,
+            isCondition: true,
+            conditionMet: useAppStore.getState().evaluateCondition(conn.condition, contract),
+          });
+        } else {
+          allNodes.push({ node, isCondition: true, conditionMet: false });
+        }
+      } else {
+        allNodes.push({ node, isCondition: false });
+      }
+      lastId = nodeId;
+      const outConns = workflow.connections.filter((c) => c.from === nodeId);
+      if (outConns.length === 0) return;
+
+      if (node.type === 'condition') {
+        for (const conn of outConns) {
+          if (conn.condition && useAppStore.getState().evaluateCondition(conn.condition, contract)) {
+            collectNodes(conn.to);
+            return;
+          }
+        }
+        const elseConn = outConns.find((c) => !c.condition);
+        if (elseConn) {
+          collectNodes(elseConn.to);
+        }
+      } else {
+        if (outConns[0]) {
+          collectNodes(outConns[0].to);
+        }
+      }
+    };
+    collectNodes(startNode.id);
+  }
+
+  const displayNodes = allNodes.filter((n) => !n.isCondition);
+  const actualCurrentIdx = displayNodes.findIndex((n) => n.node.id === contract.currentNodeId);
+
   const sortedHistory = [...contract.approvalHistory].sort(
     (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+  );
+
+  const allSignatories = contract.signatories.filter(
+    (s) => s.nodeId === contract.currentNodeId
   );
 
   return (
@@ -134,6 +229,15 @@ export default function ApprovalDetail() {
         </button>
       }
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={handleFileUpload}
+        className="hidden"
+        accept=".doc,.docx,.pdf,.xls,.xlsx,.zip,.jpg,.jpeg,.png"
+      />
+
       <div className="mt-2 grid grid-cols-12 gap-5">
         <div className="col-span-8 space-y-5">
           <div className="card-base p-6">
@@ -186,17 +290,24 @@ export default function ApprovalDetail() {
                 <ChevronRight className="w-4 h-4 text-indigo-700" />
               </span>
               审批流程进度
+              {contract.amount >= 5000000 && (
+                <span className="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  大额合同 · 已按金额分支流转
+                </span>
+              )}
             </h3>
             <div className="relative py-4">
               <div className="flex items-start justify-between gap-2">
-                {workflow.nodes.map((node, idx) => {
-                  const isCompleted = idx < currentNodeIdx;
-                  const isCurrent = idx === currentNodeIdx;
+                {displayNodes.map((item, idx) => {
+                  const node = item.node;
+                  const isCompleted = idx < actualCurrentIdx;
+                  const isCurrent = idx === actualCurrentIdx;
                   const nodeCfg = NODE_CONFIG[node.type];
-                  const historyForNode = sortedHistory.filter(h => h.nodeId === node.id);
+                  const historyForNode = sortedHistory.filter((h) => h.nodeId === node.id);
                   return (
                     <div key={node.id} className="flex-1 flex flex-col items-center min-w-0 relative">
-                      {idx < workflow.nodes.length - 1 && (
+                      {idx < displayNodes.length - 1 && (
                         <div
                           className={`absolute top-5 left-[60%] right-[-40%] h-0.5 z-0 ${
                             isCompleted ? 'bg-gradient-to-r from-emerald-400 to-emerald-300' : 'bg-gray-200'
@@ -247,6 +358,52 @@ export default function ApprovalDetail() {
             </div>
           </div>
 
+          {allSignatories.length > 0 && (
+            <div className="card-base p-6 border-2 border-amber-200 bg-gradient-to-br from-amber-50/50 to-white">
+              <h3 className="section-title mb-4 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-md bg-amber-500 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4 text-white" />
+                </span>
+                加签审批
+                <span className="ml-auto text-xs font-normal text-gray-500">
+                  {allSignatories.filter((s) => s.status === 'approved').length} / {allSignatories.length} 已处理
+                </span>
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {allSignatories.map((s) => (
+                  <div key={s.id} className="p-3 rounded-xl bg-white border border-amber-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-gradient-indigo flex items-center justify-center text-[10px] font-bold text-gold-300">
+                          {s.userName.slice(0, 1)}
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-gray-800">{s.userName}</p>
+                          <p className="text-[10px] text-gray-500">加签审批人</p>
+                        </div>
+                      </div>
+                      <span className={`tag-base text-[10px] ${
+                        s.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                        s.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' :
+                        'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        {s.status === 'approved' ? '已同意' : s.status === 'rejected' ? '已驳回' : '待处理'}
+                      </span>
+                    </div>
+                    {s.opinion && (
+                      <p className="text-[11px] text-gray-600 bg-cream/50 rounded-lg p-2 mt-1">
+                        {s.opinion}
+                      </p>
+                    )}
+                    {s.actionTime && (
+                      <p className="text-[10px] text-gray-400 mt-1.5">{formatDateTime(s.actionTime)}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="card-base p-6">
             <h3 className="section-title mb-4 flex items-center gap-2">
               <span className="w-6 h-6 rounded-md bg-gold-50 flex items-center justify-center">
@@ -272,6 +429,12 @@ export default function ApprovalDetail() {
                       <div className="flex items-center gap-2 flex-wrap mb-1.5">
                         <span className="text-sm font-semibold text-gray-800">{record.approverName}</span>
                         <span className="text-[11px] text-gray-400">· {record.nodeName}</span>
+                        {record.signatoryId && (
+                          <span className="tag-base bg-amber-50 text-amber-700 border-amber-200 text-[10px]">
+                            <UserPlus className="w-2.5 h-2.5" />
+                            加签
+                          </span>
+                        )}
                         <span className={`tag-base ${actionCfg.color}`}>
                           {record.action === 'approve' && <CheckCircle2 className="w-3 h-3" />}
                           {record.action === 'reject' && <XCircle className="w-3 h-3" />}
@@ -296,13 +459,17 @@ export default function ApprovalDetail() {
             </div>
           </div>
 
-          {isMyTurn && (
-            <div className="card-base p-6 border-2 border-indigo-100 bg-gradient-to-br from-indigo-50/30 to-white">
+          {(isMyTurn || pendingSignatory) && (
+            <div className={`card-base p-6 border-2 ${
+              pendingSignatory ? 'border-amber-200 bg-gradient-to-br from-amber-50/30 to-white' : 'border-indigo-100 bg-gradient-to-br from-indigo-50/30 to-white'
+            }`}>
               <h3 className="section-title mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-md bg-indigo-600 flex items-center justify-center">
-                  <CheckCircle2 className="w-4 h-4 text-white" />
+                <span className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                  pendingSignatory ? 'bg-amber-500' : 'bg-indigo-600'
+                }`}>
+                  {pendingSignatory ? <UserPlus className="w-4 h-4 text-white" /> : <CheckCircle2 className="w-4 h-4 text-white" />}
                 </span>
-                当前审批操作
+                {pendingSignatory ? '加签审批操作' : '当前审批操作'}
                 {currentNode && (
                   <span className="ml-auto text-xs font-normal text-gray-500">
                     正在处理：<span className="font-semibold text-indigo-800">{currentNode.name}</span>
@@ -316,7 +483,7 @@ export default function ApprovalDetail() {
                   rows={3}
                   value={opinion}
                   onChange={(e) => setOpinion(e.target.value)}
-                  placeholder="请输入审批意见（驳回时必填）..."
+                  placeholder={pendingSignatory ? '请输入加签审批意见...' : '请输入审批意见（驳回时必填）...'}
                   className="input-base resize-none"
                 />
                 <div className="flex gap-2 mt-2">
@@ -333,17 +500,25 @@ export default function ApprovalDetail() {
               </div>
 
               <div className="flex items-center gap-3">
-                <button onClick={handleApprove} className="btn-success flex-1 py-3">
+                <button
+                  onClick={() => pendingSignatory ? handleSignatoryApprove(true) : handleApprove()}
+                  className="btn-success flex-1 py-3"
+                >
                   <CheckCircle2 className="w-5 h-5" />
                   同意通过
                 </button>
-                <button onClick={() => setShowSignModal(true)} className="btn-secondary flex-1 py-3">
-                  <UserPlus className="w-5 h-5" />
-                  加签转办
-                </button>
-                <button onClick={handleReject} className="btn-danger flex-1 py-3">
+                {!pendingSignatory && (
+                  <button onClick={() => setShowSignModal(true)} className="btn-secondary flex-1 py-3">
+                    <UserPlus className="w-5 h-5" />
+                    加签转办
+                  </button>
+                )}
+                <button
+                  onClick={() => pendingSignatory ? handleSignatoryApprove(false) : handleReject()}
+                  className="btn-danger flex-1 py-3"
+                >
                   <XCircle className="w-5 h-5" />
-                  驳回到修改
+                  {pendingSignatory ? '驳回加签' : '驳回到修改'}
                 </button>
               </div>
             </div>
@@ -357,7 +532,7 @@ export default function ApprovalDetail() {
               合同附件
               <span className="ml-auto text-xs font-normal text-gray-400">{contract.attachments.length} 个文件</span>
             </h3>
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
               {contract.attachments.length === 0 && (
                 <div className="py-8 text-center">
                   <Folder className="w-10 h-10 text-gray-300 mx-auto mb-2" />
@@ -398,8 +573,11 @@ export default function ApprovalDetail() {
               })}
             </div>
 
-            <button className="w-full mt-4 py-2.5 rounded-xl border-2 border-dashed border-gray-200 hover:border-gold-400 hover:bg-gold-50/30 transition-all text-xs text-gray-500 hover:text-gold-700 font-medium flex items-center justify-center gap-1.5">
-              <Paperclip className="w-3.5 h-3.5" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full mt-4 py-2.5 rounded-xl border-2 border-dashed border-gray-200 hover:border-gold-400 hover:bg-gold-50/30 transition-all text-xs text-gray-500 hover:text-gold-700 font-medium flex items-center justify-center gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" />
               上传新附件
             </button>
           </div>
@@ -416,7 +594,7 @@ export default function ApprovalDetail() {
               </div>
               <div className="flex items-center justify-between py-2 border-b border-gray-50">
                 <span className="text-xs text-gray-500">已完成节点</span>
-                <span className="text-xs font-semibold text-emerald-700">{sortedHistory.length} / {workflow.nodes.length}</span>
+                <span className="text-xs font-semibold text-emerald-700">{sortedHistory.filter((h) => !h.signatoryId).length} / {displayNodes.length}</span>
               </div>
               <div className="flex items-center justify-between py-2 border-b border-gray-50">
                 <span className="text-xs text-gray-500">发起时间</span>
@@ -468,6 +646,9 @@ export default function ApprovalDetail() {
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">将此节点转交其他人员进行审批</p>
               </div>
+              <button onClick={() => setShowSignModal(false)} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+                <XCircle className="w-4 h-4 text-gray-400" />
+              </button>
             </div>
             <div className="p-6 space-y-4">
               <div>
@@ -478,7 +659,7 @@ export default function ApprovalDetail() {
                   className="select-base"
                 >
                   <option value="">请选择加签人员</option>
-                  {USERS.filter(u => u.id !== currentUser.id).map(u => (
+                  {USERS.filter((u) => u.id !== currentUser.id).map((u) => (
                     <option key={u.id} value={u.id}>{u.name} · {u.department}</option>
                   ))}
                 </select>
@@ -495,13 +676,16 @@ export default function ApprovalDetail() {
               </div>
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/50">
-              <button onClick={() => setShowSignModal(false)} className="btn-secondary text-sm">
+              <button
+                onClick={() => { setShowSignModal(false); setOpinion(''); setSignUser(''); }}
+                className="btn-secondary text-sm"
+              >
                 取消
               </button>
               <button
                 onClick={handleSign}
                 disabled={!signUser}
-                className="btn-primary text-sm"
+                className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Share2 className="w-4 h-4" />
                 确认加签

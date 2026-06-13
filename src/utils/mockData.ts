@@ -114,10 +114,11 @@ export const mockContracts: Contract[] = [
     createTime: daysAgo(3),
     expectedArchiveTime: daysLater(5),
     attachments: [
-      { id: 'a1', name: '采购框架协议草案.docx', size: 245000, uploadTime: daysAgo(3), uploader: '李思琪', fileType: 'docx' },
-      { id: 'a2', name: '供应商报价单.xlsx', size: 89000, uploadTime: daysAgo(3), uploader: '李思琪', fileType: 'xlsx' },
-      { id: 'a3', name: '立项审批表.pdf', size: 1024000, uploadTime: daysAgo(2), uploader: '李思琪', fileType: 'pdf' },
-    ],
+        { id: 'a1', name: '采购框架协议草案.docx', size: 245000, uploadTime: daysAgo(3), uploader: '李思琪', fileType: 'docx' },
+        { id: 'a2', name: '供应商报价单.xlsx', size: 89000, uploadTime: daysAgo(3), uploader: '李思琪', fileType: 'xlsx' },
+        { id: 'a3', name: '立项审批表.pdf', size: 1024000, uploadTime: daysAgo(2), uploader: '李思琪', fileType: 'pdf' },
+      ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'n2', nodeName: '合同起草', approverId: 'u2', approverName: '李思琪', action: 'approve', opinion: '已完成合同草案，采购设备清单与报价已核对无误，请法务审核。', time: daysAgo(3) },
     ],
@@ -141,6 +142,7 @@ export const mockContracts: Contract[] = [
       { id: 'b1', name: '销售合作协议终稿.docx', size: 312000, uploadTime: daysAgo(7), uploader: '张明远', fileType: 'docx' },
       { id: 'b2', name: '合作方资质文件.zip', size: 5400000, uploadTime: daysAgo(7), uploader: '张明远', fileType: 'zip' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'm2', nodeName: '合同起草', approverId: 'u1', approverName: '张明远', action: 'approve', opinion: '合同草案已完成，合作条款经双方初步沟通确认。', time: daysAgo(7) },
       { nodeId: 'm3', nodeName: '业务确认', approverId: 'u3', approverName: '王建国', action: 'approve', opinion: '业务方案可行，符合年度销售目标，同意推进。', time: daysAgo(6) },
@@ -166,6 +168,7 @@ export const mockContracts: Contract[] = [
       { id: 'c1', name: '运维服务合同.docx', size: 198000, uploadTime: daysAgo(5), uploader: '张明远', fileType: 'docx' },
       { id: 'c2', name: 'SLA服务等级协议.pdf', size: 456000, uploadTime: daysAgo(5), uploader: '张明远', fileType: 'pdf' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'n2', nodeName: '合同起草', approverId: 'u1', approverName: '张明远', action: 'approve', opinion: '合同及SLA协议已完成，服务范围与报价确认。', time: daysAgo(5) },
       { nodeId: 'n3', nodeName: '法务审核', approverId: 'u5', approverName: '陈剑锋', action: 'approve', opinion: '条款合规，服务期限和终止条款已核对。', time: daysAgo(3) },
@@ -189,6 +192,7 @@ export const mockContracts: Contract[] = [
     attachments: [
       { id: 'd1', name: '聘用协议.docx', size: 156000, uploadTime: daysAgo(10), uploader: '李思琪', fileType: 'docx' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'n2', nodeName: '合同起草', approverId: 'u2', approverName: '李思琪', action: 'approve', opinion: '聘用协议已按薪酬委员会决议拟定。', time: daysAgo(10) },
       { nodeId: 'n3', nodeName: '法务审核', approverId: 'u5', approverName: '陈剑锋', action: 'approve', opinion: '竞业限制和保密条款完善。', time: daysAgo(8) },
@@ -214,6 +218,7 @@ export const mockContracts: Contract[] = [
       { id: 'e1', name: '供货合同主协议.docx', size: 425000, uploadTime: daysAgo(14), uploader: '李思琪', fileType: 'docx' },
       { id: 'e2', name: '价格清单附件.xlsx', size: 67000, uploadTime: daysAgo(14), uploader: '李思琪', fileType: 'xlsx' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'm2', nodeName: '合同起草', approverId: 'u2', approverName: '李思琪', action: 'approve', opinion: '已按年度采购计划完成框架协议草案。', time: daysAgo(14) },
       { nodeId: 'm3', nodeName: '业务确认', approverId: 'u4', approverName: '赵敏', action: 'approve', opinion: '生产需求已确认，供货周期满足排产计划。', time: daysAgo(12) },
@@ -239,6 +244,7 @@ export const mockContracts: Contract[] = [
     attachments: [
       { id: 'f1', name: '分销合同.pdf', size: 892000, uploadTime: daysAgo(45), uploader: '张明远', fileType: 'pdf' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'm2', nodeName: '合同起草', approverId: 'u1', approverName: '张明远', action: 'approve', opinion: '', time: daysAgo(45) },
       { nodeId: 'm3', nodeName: '业务确认', approverId: 'u3', approverName: '王建国', action: 'approve', opinion: '渠道策略符合年度规划', time: daysAgo(43) },
@@ -267,6 +273,7 @@ export const mockContracts: Contract[] = [
     attachments: [
       { id: 'g1', name: '清洁服务合同.pdf', size: 234000, uploadTime: daysAgo(60), uploader: '李思琪', fileType: 'pdf' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'n2', nodeName: '合同起草', approverId: 'u2', approverName: '李思琪', action: 'approve', opinion: '', time: daysAgo(60) },
       { nodeId: 'n3', nodeName: '法务审核', approverId: 'u5', approverName: '陈剑锋', action: 'approve', opinion: '', time: daysAgo(58) },
@@ -293,6 +300,7 @@ export const mockContracts: Contract[] = [
     attachments: [
       { id: 'h1', name: '软件采购合同草案.docx', size: 178000, uploadTime: daysAgo(8), uploader: '张明远', fileType: 'docx' },
     ],
+    signatories: [],
     approvalHistory: [
       { nodeId: 'n2', nodeName: '合同起草', approverId: 'u1', approverName: '张明远', action: 'approve', opinion: '已完成采购需求整理和供应商选型。', time: daysAgo(8) },
       { nodeId: 'n3', nodeName: '法务审核', approverId: 'u5', approverName: '陈剑锋', action: 'reject', opinion: '第5.2条数据安全条款不完善，需补充数据脱敏和隐私合规约定；第7条知识产权归属需重新约定。请修改后重新提交。', time: daysAgo(5) },

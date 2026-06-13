@@ -1,22 +1,24 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus, Filter, Search, Clock, User, X, ChevronDown, FileText,
   AlertCircle, CheckCircle2, Download, Megaphone, ArrowUpDown,
+  Upload, Trash2, Paperclip, AlertTriangle,
 } from 'lucide-react';
 import PageContainer from '@/components/layout/PageContainer';
 import { useAppStore } from '@/store/useAppStore';
-import { ContractType, ContractStatus, Priority } from '@/types';
+import { ContractType, ContractStatus, Priority, ContractAttachment } from '@/types';
 import {
   CONTRACT_TYPE_CONFIG, PRIORITY_CONFIG, STATUS_CONFIG, NODE_CONFIG, DEPARTMENTS, USERS,
 } from '@/utils/constants';
-import { formatCurrency, formatDate, generateContractCode, generateId, getRelativeTime } from '@/utils/helpers';
+import { formatCurrency, formatDate, formatFileSize, generateContractCode, generateId, getRelativeTime } from '@/utils/helpers';
 
 type TabType = 'pending' | 'initiated' | 'processed' | 'all';
 
 export default function ContractWorkbench() {
   const navigate = useNavigate();
-  const { contracts, currentUser, workflows, addContract } = useAppStore();
+  const { contracts, currentUser, workflows, addContract, addAttachment, handleSignatoryApproval } = useAppStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [searchText, setSearchText] = useState('');
@@ -24,18 +26,27 @@ export default function ContractWorkbench() {
   const [statusFilter, setStatusFilter] = useState<ContractStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<ContractAttachment[]>([]);
 
   const filteredContracts = useMemo(() => {
     return contracts.filter((c) => {
       if (activeTab === 'pending') {
         const processed = c.approvalHistory.some((h) => h.approverId === currentUser.id);
-        if (!(c.status === 'pending' && !processed)) return false;
+        const pendingSignatory = c.signatories.some(
+          (s) => s.userId === currentUser.id && s.status === 'pending'
+        );
+        const isCurrentApprover = c.status === 'pending' && !processed;
+        if (!isCurrentApprover && !pendingSignatory) return false;
       }
       if (activeTab === 'initiated') {
         if (c.applicantId !== currentUser.id) return false;
       }
       if (activeTab === 'processed') {
-        if (!c.approvalHistory.some((h) => h.approverId === currentUser.id)) return false;
+        const hasApproved = c.approvalHistory.some((h) => h.approverId === currentUser.id);
+        const hasSigned = c.signatories.some(
+          (s) => s.userId === currentUser.id && s.status !== 'pending'
+        );
+        if (!hasApproved && !hasSigned) return false;
       }
       if (searchText && !c.name.includes(searchText) && !c.code.includes(searchText)) return false;
       if (typeFilter !== 'all' && c.type !== typeFilter) return false;
@@ -51,17 +62,50 @@ export default function ContractWorkbench() {
       label: '待我审批',
       count: contracts.filter((c) => {
         const processed = c.approvalHistory.some((h) => h.approverId === currentUser.id);
-        return c.status === 'pending' && !processed;
+        const pendingSignatory = c.signatories.some(
+          (s) => s.userId === currentUser.id && s.status === 'pending'
+        );
+        return (c.status === 'pending' && !processed) || pendingSignatory;
       }).length,
     },
     { key: 'initiated', label: '我发起的', count: contracts.filter((c) => c.applicantId === currentUser.id).length },
-    { key: 'processed', label: '我已处理', count: contracts.filter((c) => c.approvalHistory.some((h) => h.approverId === currentUser.id)).length },
+    { key: 'processed', label: '我已处理', count: contracts.filter((c) => {
+      const hasApproved = c.approvalHistory.some((h) => h.approverId === currentUser.id);
+      const hasSigned = c.signatories.some((s) => s.userId === currentUser.id && s.status !== 'pending');
+      return hasApproved || hasSigned;
+    }).length },
     { key: 'all', label: '全部合同', count: contracts.length },
   ];
 
   const handleUrge = (contractId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     alert('已向审批人发送催办通知！');
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newAttachments: ContractAttachment[] = [];
+    Array.from(files).forEach((file) => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      newAttachments.push({
+        id: generateId(),
+        name: file.name,
+        size: file.size,
+        uploadTime: new Date().toISOString(),
+        uploader: currentUser.name,
+        fileType: ext,
+      });
+    });
+    setPendingAttachments([...pendingAttachments, ...newAttachments]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setPendingAttachments(pendingAttachments.filter((a) => a.id !== id));
   };
 
   const handleCreateContract = (e: React.FormEvent<HTMLFormElement>) => {
@@ -72,7 +116,14 @@ export default function ContractWorkbench() {
     const workflow = workflows.find((w) => w.id === workflowId);
     if (!workflow) return;
 
-    const firstNode = workflow.nodes[1] || workflow.nodes[0];
+    const startNode = workflow.nodes.find((n) => n.type === 'start');
+    const firstApprovalNode = workflow.connections
+      .filter((c) => c.from === startNode?.id)
+      .map((c) => workflow.nodes.find((n) => n.id === c.to))
+      .find((n) => n && n.type !== 'condition');
+
+    if (!firstApprovalNode) return;
+
     const newContract = {
       id: generateId(),
       code: generateContractCode(type),
@@ -82,16 +133,17 @@ export default function ContractWorkbench() {
       status: 'pending' as const,
       priority: formData.get('priority') as Priority,
       workflowId,
-      currentNodeId: firstNode.id,
+      currentNodeId: firstApprovalNode.id,
       applicantId: currentUser.id,
       applicantName: currentUser.name,
       department: formData.get('department') as string,
       createTime: new Date().toISOString(),
       expectedArchiveTime: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-      attachments: [],
+      attachments: pendingAttachments.map((a) => ({ ...a, id: generateId() })),
+      signatories: [],
       approvalHistory: [{
-        nodeId: workflow.nodes[0]?.id || firstNode.id,
-        nodeName: workflow.nodes[0]?.name || '发起',
+        nodeId: startNode?.id || firstApprovalNode.id,
+        nodeName: startNode?.name || '发起',
         approverId: currentUser.id,
         approverName: currentUser.name,
         action: 'approve' as const,
@@ -101,7 +153,14 @@ export default function ContractWorkbench() {
     };
     addContract(newContract);
     setShowCreateModal(false);
+    setPendingAttachments([]);
     navigate(`/approval/${newContract.id}`);
+  };
+
+  const handleSignatoryAction = (contractId: string, signatoryId: string, approved: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const opinion = approved ? '同意（加签审批）' : '驳回（加签审批）';
+    handleSignatoryApproval(contractId, signatoryId, approved, opinion);
   };
 
   return (
@@ -128,9 +187,11 @@ export default function ContractWorkbench() {
               }`}
             >
               {t.label}
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] ${
-                activeTab === t.key ? 'bg-white/20' : 'bg-gray-100'
-              }`}>{t.count}</span>
+              {t.count > 0 && (
+                <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] ${
+                  activeTab === t.key ? 'bg-white/20' : 'bg-gray-100'
+                }`}>{t.count}</span>
+              )}
             </button>
           ))}
         </div>
@@ -207,6 +268,9 @@ export default function ContractWorkbench() {
                 const priorCfg = PRIORITY_CONFIG[c.priority];
                 const statusCfg = STATUS_CONFIG[c.status];
                 const canUrge = c.status === 'pending' && c.applicantId === currentUser.id;
+                const pendingSignatory = c.signatories.find(
+                  (s) => s.userId === currentUser.id && s.status === 'pending'
+                );
                 return (
                   <tr
                     key={c.id}
@@ -218,12 +282,18 @@ export default function ContractWorkbench() {
                       <div className="flex items-start gap-3">
                         <div className="w-1 h-10 rounded-full bg-gradient-to-b from-indigo-700 to-indigo-500 mt-0.5 flex-shrink-0" />
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium text-gray-800 text-sm truncate max-w-xs">{c.name}</p>
                             <span className={`tag-base border ${priorCfg.color}`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${priorCfg.dot}`} />
                               {priorCfg.label}
                             </span>
+                            {pendingSignatory && (
+                              <span className="tag-base bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" />
+                                待加签审批
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="font-mono text-xs text-gray-400">{c.code}</span>
@@ -274,6 +344,22 @@ export default function ContractWorkbench() {
                     </td>
                     <td className="px-5 py-4 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {pendingSignatory && (
+                          <>
+                            <button
+                              onClick={(e) => handleSignatoryAction(c.id, pendingSignatory.id, true, e)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[11px] font-medium hover:bg-emerald-200 transition-colors"
+                            >
+                              同意
+                            </button>
+                            <button
+                              onClick={(e) => handleSignatoryAction(c.id, pendingSignatory.id, false, e)}
+                              className="px-2.5 py-1 rounded-lg bg-red-100 text-red-700 text-[11px] font-medium hover:bg-red-200 transition-colors"
+                            >
+                              驳回
+                            </button>
+                          </>
+                        )}
                         {canUrge && (
                           <button
                             onClick={(e) => handleUrge(c.id, e)}
@@ -318,7 +404,10 @@ export default function ContractWorkbench() {
                 <h3 className="section-title">发起新合同审批</h3>
                 <p className="text-xs text-gray-500 mt-0.5">请填写合同基本信息并选择对应审批流程</p>
               </div>
-              <button onClick={() => setShowCreateModal(false)} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+              <button
+                onClick={() => { setShowCreateModal(false); setPendingAttachments([]); }}
+                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              >
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -359,7 +448,7 @@ export default function ContractWorkbench() {
                   <div className="relative">
                     <select name="workflowId" required defaultValue={workflows[0]?.id} className="select-base pr-10 appearance-none">
                       {workflows.filter((w) => w.enabled).map((w) => (
-                        <option key={w.id} value={w.id}>{w.name} · {w.nodes.length - 2}个节点</option>
+                        <option key={w.id} value={w.id}>{w.name} · {w.nodes.filter((n) => n.type !== 'start' && n.type !== 'end').length}个节点</option>
                       ))}
                     </select>
                     <ChevronDown className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -367,23 +456,60 @@ export default function ContractWorkbench() {
                 </div>
                 <div className="col-span-2">
                   <label className="label-base">合同附件</label>
-                  <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:border-gold-300 transition-colors cursor-pointer">
-                    <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept=".doc,.docx,.pdf,.xls,.xlsx,.zip,.jpg,.jpeg,.png"
+                  />
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-gray-200 rounded-xl p-5 text-center hover:border-gold-300 transition-colors cursor-pointer group"
+                  >
+                    <Upload className="w-7 h-7 text-gray-400 mx-auto mb-1.5 group-hover:text-gold-500 transition-colors" />
                     <p className="text-sm text-gray-600 font-medium">点击或拖拽上传合同文件</p>
                     <p className="text-xs text-gray-400 mt-1">支持 Word、PDF、Excel 等格式，单个文件不超过 50MB</p>
                   </div>
+                  {pendingAttachments.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                        <Paperclip className="w-3.5 h-3.5" />
+                        已选择 {pendingAttachments.length} 个文件：
+                      </p>
+                      {pendingAttachments.map((a) => (
+                        <div key={a.id} className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-cream/60 border border-gold-100 group">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <FileText className="w-4 h-4 text-gold-600 flex-shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-gray-700 truncate">{a.name}</p>
+                              <p className="text-[10px] text-gray-500">{formatFileSize(a.size)} · {a.uploader}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); removeAttachment(a.id); }}
+                            className="p-1.5 rounded-md hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
+              <div className="flex justify-end gap-3 pt-3">
+                <button type="button" onClick={() => { setShowCreateModal(false); setPendingAttachments([]); }} className="btn-secondary">
+                  取消
+                </button>
+                <button type="submit" className="btn-primary flex items-center gap-1.5">
+                  <User className="w-4 h-4" />
+                  提交发起审批
+                </button>
+              </div>
             </form>
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/50">
-              <button type="button" onClick={() => setShowCreateModal(false)} className="btn-secondary">
-                取消
-              </button>
-              <button type="submit" className="btn-primary">
-                <User className="w-4 h-4" />
-                提交发起审批
-              </button>
-            </div>
           </div>
         </div>
       )}

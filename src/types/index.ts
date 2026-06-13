@@ -51,6 +51,16 @@ export interface ContractAttachment {
 
 export type ApprovalAction = 'approve' | 'reject' | 'sign' | 'transfer';
 
+export interface Signatory {
+  id: string;
+  userId: string;
+  userName: string;
+  nodeId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  opinion: string;
+  actionTime?: string;
+}
+
 export interface ApprovalRecord {
   nodeId: string;
   nodeName: string;
@@ -59,6 +69,7 @@ export interface ApprovalRecord {
   action: ApprovalAction;
   opinion: string;
   time: string;
+  signatoryId?: string;
 }
 
 export interface Contract {
@@ -79,6 +90,7 @@ export interface Contract {
   actualArchiveTime?: string;
   attachments: ContractAttachment[];
   approvalHistory: ApprovalRecord[];
+  signatories: Signatory[];
 }
 
 export interface ContractTemplate {

@@ -31,6 +31,9 @@ export default function ProcessDesigner() {
   const [connecting, setConnecting] = useState<{ fromId: string; startX: number; startY: number } | null>(null);
   const [showNewWfModal, setShowNewWfModal] = useState(false);
   const [newWfName, setNewWfName] = useState('');
+  const [editingMaterialIdx, setEditingMaterialIdx] = useState<number | null>(null);
+  const [editingMaterialValue, setEditingMaterialValue] = useState('');
+  const [newMaterial, setNewMaterial] = useState('');
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const activeWorkflow = workflows.find((w) => w.id === activeWorkflowId);
@@ -128,6 +131,41 @@ export default function ProcessDesigner() {
       activeWorkflow.id,
       activeWorkflow.nodes.map(n => n.id === selectedNodeId ? { ...n, ...data } : n)
     );
+  };
+
+  const handleAddMaterial = () => {
+    if (!selectedNode || !newMaterial.trim()) return;
+    const materials = [...selectedNode.requiredMaterials, newMaterial.trim()];
+    handleUpdateSelectedNode({ requiredMaterials: materials });
+    setNewMaterial('');
+  };
+
+  const handleDeleteMaterial = (idx: number) => {
+    if (!selectedNode) return;
+    const materials = selectedNode.requiredMaterials.filter((_, i) => i !== idx);
+    handleUpdateSelectedNode({ requiredMaterials: materials });
+    if (editingMaterialIdx === idx) {
+      setEditingMaterialIdx(null);
+    }
+  };
+
+  const handleStartEditMaterial = (idx: number, value: string) => {
+    setEditingMaterialIdx(idx);
+    setEditingMaterialValue(value);
+  };
+
+  const handleSaveEditMaterial = () => {
+    if (!selectedNode || editingMaterialIdx === null || !editingMaterialValue.trim()) return;
+    const materials = [...selectedNode.requiredMaterials];
+    materials[editingMaterialIdx] = editingMaterialValue.trim();
+    handleUpdateSelectedNode({ requiredMaterials: materials });
+    setEditingMaterialIdx(null);
+    setEditingMaterialValue('');
+  };
+
+  const handleCancelEditMaterial = () => {
+    setEditingMaterialIdx(null);
+    setEditingMaterialValue('');
   };
 
   const handleStartConnect = (nodeId: string, e: React.MouseEvent) => {
@@ -492,25 +530,81 @@ export default function ProcessDesigner() {
                     </div>
 
                     <div>
-                      <label className="label-base flex items-center justify-between">
+                      <label className="label-base flex items-center justify-between mb-2">
                         <span>必填材料</span>
-                        <button className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium">+ 添加</button>
                       </label>
+
+                      <div className="flex gap-2 mb-3">
+                        <input
+                          value={newMaterial}
+                          onChange={(e) => setNewMaterial(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddMaterial())}
+                          placeholder="输入材料名称..."
+                          className="input-base text-xs flex-1 h-9 py-1"
+                        />
+                        <button
+                          onClick={handleAddMaterial}
+                          disabled={!newMaterial.trim()}
+                          className="btn-primary text-xs px-3 h-9 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          添加
+                        </button>
+                      </div>
+
                       {selectedNode.requiredMaterials.length > 0 ? (
                         <div className="space-y-1.5">
                           {selectedNode.requiredMaterials.map((m, idx) => (
-                            <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cream/60 border border-gold-100">
-                              <FileText className="w-3.5 h-3.5 text-gold-600" />
-                              <span className="text-xs text-gray-700 flex-1">{m}</span>
-                              <button className="text-gray-400 hover:text-red-500">
-                                <XCircle className="w-3.5 h-3.5" />
-                              </button>
+                            <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cream/60 border border-gold-100 group">
+                              <FileText className="w-3.5 h-3.5 text-gold-600 flex-shrink-0" />
+                              {editingMaterialIdx === idx ? (
+                                <div className="flex-1 flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    value={editingMaterialValue}
+                                    onChange={(e) => setEditingMaterialValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') { e.preventDefault(); handleSaveEditMaterial(); }
+                                      if (e.key === 'Escape') { e.preventDefault(); handleCancelEditMaterial(); }
+                                    }}
+                                    className="input-base text-xs flex-1 h-7 py-0.5 px-2 border-gold-300 focus:border-gold-500"
+                                  />
+                                  <button onClick={handleSaveEditMaterial} className="p-1 rounded hover:bg-emerald-100 text-emerald-600">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={handleCancelEditMaterial} className="p-1 rounded hover:bg-gray-100 text-gray-500">
+                                    <XCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-gray-700 flex-1">{m}</span>
+                                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={() => handleStartEditMaterial(idx, m)}
+                                      className="p-1 rounded hover:bg-indigo-100 text-gray-400 hover:text-indigo-600"
+                                      title="编辑"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMaterial(idx)}
+                                      className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-500"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           ))}
                         </div>
                       ) : (
                         <div className="px-3 py-4 rounded-lg border-2 border-dashed border-gray-200 text-center">
+                          <FileText className="w-8 h-8 text-gray-300 mx-auto mb-1.5" />
                           <p className="text-xs text-gray-400">暂无必填材料要求</p>
+                          <p className="text-[10px] text-gray-300 mt-0.5">在上方输入框添加材料</p>
                         </div>
                       )}
                     </div>
